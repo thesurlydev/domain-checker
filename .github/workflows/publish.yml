@@ -33,18 +33,16 @@ jobs:
             asset_name: domain-checker-macos
 
     steps:
-    - uses: actions/checkout@v2
-
-    - uses: actions-rs/toolchain@v1
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
       with:
-        profile: minimal
         toolchain: stable
 
     - name: Build
       run: cargo build --release --locked
 
     - name: Upload binaries to release
-      uses: svenstaro/upload-release-action@v1-release
+      uses: svenstaro/upload-release-action@v2
       with:
         repo_token: ${{ secrets.GH_TOKEN }}
         file: target/release/${{ matrix.artifact_name }}
