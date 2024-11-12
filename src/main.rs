@@ -1,11 +1,11 @@
-// src/main.rs
+use chrono::Utc;
 use clap::Parser;
 use futures::stream::{self, StreamExt};
-use serde::{Serialize, Deserialize};
-use std::path::PathBuf;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{self, BufRead};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::path::PathBuf;
+use std::time::Duration;
 use trust_dns_resolver::config::{ResolverConfig, ResolverOpts};
 use trust_dns_resolver::TokioAsyncResolver;
 
@@ -32,13 +32,13 @@ struct Cli {
     #[arg(long)]
     output_file: Option<PathBuf>,
 
-    /// Include timestamp in output
-    #[arg(short, long)]
-    timestamp: bool,
-
     /// Strip whitespace and empty lines from input
     #[arg(long)]
     clean: bool,
+
+    /// Show only unregistered domains in output
+    #[arg(short = 'u', long)]
+    unregistered_only: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -54,7 +54,7 @@ struct DomainStatus {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct CheckResult {
-    timestamp: Option<u64>,
+    timestamp: String,
     check_count: usize,
     domains: Vec<DomainStatus>,
     summary: ResultSummary,
@@ -151,21 +151,14 @@ impl DomainChecker {
     }
 }
 
-fn create_check_result(domains: Vec<DomainStatus>, include_timestamp: bool) -> CheckResult {
+fn create_check_result(domains: Vec<DomainStatus>, timestamp: String) -> CheckResult {
     let total_checked = domains.len();
     let registered = domains.iter().filter(|d| d.registered).count();
     let unregistered = domains.iter().filter(|d| !d.registered).count();
     let errors = domains.iter().filter(|d| d.error.is_some()).count();
 
     CheckResult {
-        timestamp: if include_timestamp {
-            Some(SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs())
-        } else {
-            None
-        },
+        timestamp,
         check_count: total_checked,
         domains,
         summary: ResultSummary {
@@ -177,10 +170,43 @@ fn create_check_result(domains: Vec<DomainStatus>, include_timestamp: bool) -> C
     }
 }
 
-fn print_text_output(result: &CheckResult) {
-    if let Some(timestamp) = result.timestamp {
-        println!("\nTimestamp: {}", timestamp);
+fn filter_results(result: CheckResult, unregistered_only: bool) -> CheckResult {
+    if !unregistered_only {
+        return result;
     }
+
+    // Keep all original summary counts
+    let ResultSummary {
+        total_checked,
+        registered,
+        unregistered,
+        errors: _,  // We'll recalculate errors for filtered domains
+    } = result.summary;
+
+    let filtered_domains: Vec<DomainStatus> = result.domains
+        .into_iter()
+        .filter(|d| !d.registered)
+        .collect();
+
+    // Only update errors count for the filtered domains
+    let errors = filtered_domains.iter().filter(|d| d.error.is_some()).count();
+
+    CheckResult {
+        timestamp: result.timestamp,
+        check_count: total_checked,
+        domains: filtered_domains,
+        summary: ResultSummary {
+            total_checked,
+            registered,
+            unregistered,
+            errors,
+        },
+    }
+}
+
+fn print_text_output(result: &CheckResult) {
+    
+    println!("\nTimestamp: {}", result.timestamp);    
     println!("\nSummary:");
     println!("  Total Checked: {}", result.summary.total_checked);
     println!("  Registered: {}", result.summary.registered);
@@ -254,11 +280,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .check_domains(domains, cli.concurrent)
         .await;
 
-    let check_result = create_check_result(results, cli.timestamp);
+    let timestamp = Utc::now().to_rfc3339();
+
+    let check_result = create_check_result(results, timestamp);
+    let filtered_result = filter_results(check_result, cli.unregistered_only);
 
     // Handle output based on flags
     if cli.json || cli.output_file.is_some() {
-        let json = serde_json::to_string_pretty(&check_result)?;
+        let json = serde_json::to_string_pretty(&filtered_result)?;
 
         if cli.json {
             println!("{}", json);
@@ -268,7 +297,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             fs::write(path, json)?;
         }
     } else {
-        print_text_output(&check_result);
+        print_text_output(&filtered_result);
     }
 
     Ok(())
