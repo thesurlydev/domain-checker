@@ -10,7 +10,8 @@ If you have Rust installed, you can install `domain-checker` using cargo:
 cargo install domain-checker
 ```
 
-Otherwise, download the latest release from the [releases page](https://github.com/thesurlydev/domain-checker/releases)
+Otherwise, binary releases will be available soon.
+
 
 ## Usage
 
@@ -32,7 +33,9 @@ cat domains.txt | domain-checker
 For help, run:
 ```bash
 domain-checker --help
+```
 
+```bash
 Check if domain names are registered using DNS lookups
 
 Usage: domain-checker [OPTIONS] [DOMAINS]...
