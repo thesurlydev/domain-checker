@@ -1,4 +1,4 @@
-name: Release & Publish
+name: Test & Publish
 
 on:
   workflow_dispatch: # enable manual triggering
@@ -7,12 +7,9 @@ on:
       - 'v[0-9]+.*'
 
 env:
-  CARGO_TERM_COLOR: always
-  RUSTFLAGS: "-Dwarnings"
   BINARY_NAME: "domain-checker"
 
 jobs:
-  # First job: Test and publish to crates.io
   test-and-publish:
     name: Test and publish to crates.io
     runs-on: ubuntu-latest
@@ -28,9 +25,6 @@ jobs:
       - name: Run tests
         run: cargo test --verbose
 
-#      - name: Check formatting
-#        run: cargo fmt --all -- --check
-
       - name: Run clippy
         run: cargo clippy --all-targets --all-features
 
@@ -38,140 +32,3 @@ jobs:
         run: cargo publish --token ${CRATES_TOKEN}
         env:
           CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}
-
-  # Second job: Build binaries for different platforms
-  build-release:
-    name: Build Release - ${{ matrix.platform.os_name }}
-    needs: test-and-publish
-    runs-on: ${{ matrix.platform.runs_on }}
-    strategy:
-      matrix:
-        platform:
-          - os_name: Linux-x86_64
-            runs_on: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            bin_extension: ""
-            compress_format: tar.gz
-            cross: false
-
-          - os_name: Linux-aarch64
-            runs_on: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
-            bin_extension: ""
-            compress_format: tar.gz
-            cross: true
-
-          - os_name: Windows-x86_64
-            runs_on: windows-latest
-            target: x86_64-pc-windows-msvc
-            bin_extension: .exe
-            compress_format: zip
-            cross: false
-
-          - os_name: macOS-x86_64
-            runs_on: macos-latest
-            target: x86_64-apple-darwin
-            bin_extension: ""
-            compress_format: tar.gz
-            cross: false
-
-          - os_name: macOS-aarch64
-            runs_on: macos-latest
-            target: aarch64-apple-darwin
-            bin_extension: ""
-            compress_format: tar.gz
-            cross: true
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.platform.target }}
-
-      - name: Install cross-compilation tool
-        if: matrix.platform.cross
-        run: cargo install cross
-
-      - name: Build binary (native)
-        if: "!matrix.platform.cross"
-        run: cargo build --verbose --release --target ${{ matrix.platform.target }}
-
-      - name: Build binary (cross)
-        if: matrix.platform.cross
-        run: cross build --verbose --release --target ${{ matrix.platform.target }}
-
-      - name: Prepare release archive (Unix)
-        if: matrix.platform.compress_format == 'tar.gz'
-        run: |
-          cd target/${{ matrix.platform.target }}/release
-          tar czf ../../../${{ env.BINARY_NAME }}-${{ matrix.platform.os_name }}.${{ matrix.platform.compress_format }} ${{ env.BINARY_NAME }}${{ matrix.platform.bin_extension }}
-          cd -
-
-      - name: Prepare release archive (Windows)
-        if: matrix.platform.compress_format == 'zip'
-        run: |
-          cd target/${{ matrix.platform.target }}/release
-          7z a ../../../${{ env.BINARY_NAME }}-${{ matrix.platform.os_name }}.${{ matrix.platform.compress_format }} ${{ env.BINARY_NAME }}${{ matrix.platform.bin_extension }}
-          cd -
-
-      - name: Generate SHA-256
-        run: |
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            certutil -hashfile ${{ env.BINARY_NAME }}-${{ matrix.platform.os_name }}.${{ matrix.platform.compress_format }} SHA256 > ${{ env.BINARY_NAME }}-${{ matrix.platform.os_name }}.${{ matrix.platform.compress_format }}.sha256
-          else
-            shasum -a 256 ${{ env.BINARY_NAME }}-${{ matrix.platform.os_name }}.${{ matrix.platform.compress_format }} > ${{ env.BINARY_NAME }}-${{ matrix.platform.os_name }}.${{ matrix.platform.compress_format }}.sha256
-          fi
-        shell: bash
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.BINARY_NAME }}-${{ matrix.platform.os_name }}
-          path: |
-            ${{ env.BINARY_NAME }}-${{ matrix.platform.os_name }}.${{ matrix.platform.compress_format }}
-            ${{ env.BINARY_NAME }}-${{ matrix.platform.os_name }}.${{ matrix.platform.compress_format }}.sha256
-
-  # Third job: Create GitHub Release
-  create-release:
-    name: Create GitHub Release
-    needs: build-release
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-
-      - name: Display structure of downloaded files
-        run: ls -R
-        working-directory: artifacts
-
-      - name: Get version from tag
-        id: get_version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-
-      - name: Read CHANGELOG.md
-        id: changelog
-        run: |
-          VERSION=${{ steps.get_version.outputs.VERSION }}
-          # Extract the relevant section from CHANGELOG.md
-          # Assuming CHANGELOG.md follows Keep a Changelog format
-          SECTION=$(awk "/## \[$VERSION\]/,/## \[/" CHANGELOG.md | head -n -1)
-          echo "CHANGES<<EOF" >> $GITHUB_OUTPUT
-          echo "$SECTION" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
-        with:
-          name: Release ${{ steps.get_version.outputs.VERSION }}
-          body: ${{ steps.changelog.outputs.CHANGES }}
-          files: artifacts/**/*
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
