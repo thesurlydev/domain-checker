@@ -37,7 +37,7 @@ struct Cli {
     timestamp: bool,
 
     /// Strip whitespace and empty lines from input
-    #[arg(short, long)]
+    #[arg(long)]
     clean: bool,
 }
 
