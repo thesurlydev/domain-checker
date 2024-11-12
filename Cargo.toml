@@ -1,7 +1,7 @@
 # Cargo.toml
 [package]
 name = "domain-checker"
-version = "0.1.0"
+version = "0.1.1"
 description = "Domain checker"
 authors = ["shane <shane@surly.dev>"]
 edition = "2021"
