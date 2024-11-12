@@ -47,8 +47,8 @@ Options:
   -c, --concurrent <CONCURRENT>    Maximum number of concurrent checks [default: 10]
   -j, --json                       Output as JSON to stdout
       --output-file <OUTPUT_FILE>  Save output to JSON file
-  -t, --timestamp                  Include timestamp in output
-  -c, --clean                      Strip whitespace and empty lines from input
+      --clean                      Strip whitespace and empty lines from input
+  -u, --unregistered-only          Show only unregistered domains in output
   -h, --help                       Print help
   -V, --version                    Print version
 ```
