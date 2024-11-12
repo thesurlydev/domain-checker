@@ -1,13 +1,15 @@
 # Cargo.toml
 [package]
 name = "domain-checker"
-version = "0.1.1"
+version = "0.1.2"
 description = "Domain checker"
 authors = ["shane <shane@surly.dev>"]
 edition = "2021"
 license-file = "LICENSE"
 readme = "README.md"
 repository = "https://github.com/thesurlydev/domain-checker"
+keywords = ["cli", "domain-checker", "domans", "dns-lookup", "shell"]
+categories = ["command-line-utilities", "command-line-interface"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
