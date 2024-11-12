@@ -1,8 +1,11 @@
 // src/main.rs
 use clap::Parser;
 use futures::stream::{self, StreamExt};
-use serde::Serialize;
-use std::time::Duration;
+use serde::{Serialize, Deserialize};
+use std::path::PathBuf;
+use std::fs;
+use std::io::{self, BufRead};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use trust_dns_resolver::config::{ResolverConfig, ResolverOpts};
 use trust_dns_resolver::TokioAsyncResolver;
 
@@ -13,20 +16,32 @@ use trust_dns_resolver::TokioAsyncResolver;
     version
 )]
 struct Cli {
-    /// Domain names to check
-    #[arg(required = true)]
+    /// Domain names to check (optional if reading from stdin)
+    #[arg(required = false)]
     domains: Vec<String>,
 
     /// Maximum number of concurrent checks
     #[arg(short, long, default_value = "10")]
     concurrent: usize,
 
-    /// Output as JSON
+    /// Output as JSON to stdout
     #[arg(short, long)]
     json: bool,
+
+    /// Save output to JSON file
+    #[arg(long)]
+    output_file: Option<PathBuf>,
+
+    /// Include timestamp in output
+    #[arg(short, long)]
+    timestamp: bool,
+
+    /// Strip whitespace and empty lines from input
+    #[arg(short, long)]
+    clean: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct DomainStatus {
     domain: String,
     registered: bool,
@@ -35,6 +50,22 @@ struct DomainStatus {
     nameservers: Vec<String>,
     ip_addresses: Vec<String>,
     error: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct CheckResult {
+    timestamp: Option<u64>,
+    check_count: usize,
+    domains: Vec<DomainStatus>,
+    summary: ResultSummary,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ResultSummary {
+    total_checked: usize,
+    registered: usize,
+    unregistered: usize,
+    errors: usize,
 }
 
 struct DomainChecker {
@@ -47,7 +78,10 @@ impl DomainChecker {
         opts.timeout = Duration::from_secs(2);
         opts.attempts = 2;
 
-        let resolver = TokioAsyncResolver::tokio(ResolverConfig::cloudflare(), opts);
+        let resolver = TokioAsyncResolver::tokio(
+            ResolverConfig::cloudflare(),
+            opts,
+        );
 
         Self { resolver }
     }
@@ -68,7 +102,10 @@ impl DomainChecker {
             Ok(ns_records) => {
                 status.has_dns = true;
                 status.registered = true;
-                status.nameservers = ns_records.iter().map(|record| record.to_string()).collect();
+                status.nameservers = ns_records
+                    .iter()
+                    .map(|record| record.to_string())
+                    .collect();
             }
             Err(e) => match e.kind() {
                 trust_dns_resolver::error::ResolveErrorKind::NoRecordsFound { .. } => {}
@@ -85,7 +122,10 @@ impl DomainChecker {
             Ok(ips) => {
                 status.has_ip = true;
                 status.registered = true;
-                status.ip_addresses = ips.iter().map(|ip| ip.to_string()).collect();
+                status.ip_addresses = ips
+                    .iter()
+                    .map(|ip| ip.to_string())
+                    .collect();
             }
             Err(e) => {
                 if !status.registered {
@@ -102,11 +142,7 @@ impl DomainChecker {
         status
     }
 
-    async fn check_domains(
-        &self,
-        domains: Vec<String>,
-        concurrent_limit: usize,
-    ) -> Vec<DomainStatus> {
+    async fn check_domains(&self, domains: Vec<String>, concurrent_limit: usize) -> Vec<DomainStatus> {
         stream::iter(domains)
             .map(|domain| self.check_domain(domain))
             .buffer_unordered(concurrent_limit)
@@ -115,38 +151,124 @@ impl DomainChecker {
     }
 }
 
+fn create_check_result(domains: Vec<DomainStatus>, include_timestamp: bool) -> CheckResult {
+    let total_checked = domains.len();
+    let registered = domains.iter().filter(|d| d.registered).count();
+    let unregistered = domains.iter().filter(|d| !d.registered).count();
+    let errors = domains.iter().filter(|d| d.error.is_some()).count();
+
+    CheckResult {
+        timestamp: if include_timestamp {
+            Some(SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs())
+        } else {
+            None
+        },
+        check_count: total_checked,
+        domains,
+        summary: ResultSummary {
+            total_checked,
+            registered,
+            unregistered,
+            errors,
+        },
+    }
+}
+
+fn print_text_output(result: &CheckResult) {
+    if let Some(timestamp) = result.timestamp {
+        println!("\nTimestamp: {}", timestamp);
+    }
+    println!("\nSummary:");
+    println!("  Total Checked: {}", result.summary.total_checked);
+    println!("  Registered: {}", result.summary.registered);
+    println!("  Unregistered: {}", result.summary.unregistered);
+    println!("  Errors: {}", result.summary.errors);
+
+    println!("\nDetailed Results:");
+    for status in &result.domains {
+        println!("\nDomain: {}", status.domain);
+        println!("Registered: {}", status.registered);
+
+        if !status.nameservers.is_empty() {
+            println!("Nameservers:");
+            for ns in &status.nameservers {
+                println!("  - {}", ns);
+            }
+        }
+
+        if !status.ip_addresses.is_empty() {
+            println!("IP Addresses:");
+            for ip in &status.ip_addresses {
+                println!("  - {}", ip);
+            }
+        }
+
+        if let Some(error) = &status.error {
+            println!("Error: {}", error);
+        }
+    }
+}
+
+fn read_domains_from_stdin(clean: bool) -> io::Result<Vec<String>> {
+    let stdin = io::stdin();
+    let mut domains = Vec::new();
+
+    for line in stdin.lock().lines() {
+        let line = line?;
+        if clean {
+            let trimmed = line.trim();
+            if !trimmed.is_empty() {
+                domains.push(trimmed.to_string());
+            }
+        } else {
+            domains.push(line);
+        }
+    }
+
+    Ok(domains)
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     let checker = DomainChecker::new().await;
 
-    let results = checker.check_domains(cli.domains, cli.concurrent).await;
-
-    if cli.json {
-        println!("{}", serde_json::to_string_pretty(&results)?);
+    // Get domains from either command line args or stdin
+    let domains = if cli.domains.is_empty() {
+        // No domains provided as arguments, try reading from stdin
+        read_domains_from_stdin(cli.clean)?
     } else {
-        for status in results {
-            println!("\nDomain: {}", status.domain);
-            println!("Registered: {}", status.registered);
+        cli.domains
+    };
 
-            if !status.nameservers.is_empty() {
-                println!("Nameservers:");
-                for ns in status.nameservers {
-                    println!("  - {}", ns);
-                }
-            }
+    // Verify we have domains to check
+    if domains.is_empty() {
+        eprintln!("Error: No domains provided. Either specify domains as arguments or pipe them through stdin.");
+        std::process::exit(1);
+    }
 
-            if !status.ip_addresses.is_empty() {
-                println!("IP Addresses:");
-                for ip in status.ip_addresses {
-                    println!("  - {}", ip);
-                }
-            }
+    let results = checker
+        .check_domains(domains, cli.concurrent)
+        .await;
 
-            if let Some(error) = status.error {
-                println!("Error: {}", error);
-            }
+    let check_result = create_check_result(results, cli.timestamp);
+
+    // Handle output based on flags
+    if cli.json || cli.output_file.is_some() {
+        let json = serde_json::to_string_pretty(&check_result)?;
+
+        if cli.json {
+            println!("{}", json);
         }
+
+        if let Some(path) = cli.output_file {
+            fs::write(path, json)?;
+        }
+    } else {
+        print_text_output(&check_result);
     }
 
     Ok(())
