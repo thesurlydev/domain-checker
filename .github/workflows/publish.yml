@@ -20,16 +20,16 @@ jobs:
         include:
           - name: linux
             os: ubuntu-latest
-            artifact_name: gars
-            asset_name: gars-linux
+            artifact_name: domain-checker
+            asset_name: domain-checker-linux
           - name: windows
             os: windows-latest
-            artifact_name: gars.exe
-            asset_name: gars-windows
+            artifact_name: domain-checker.exe
+            asset_name: domain-checker-windows
           - name: macos
             os: macos-latest
-            artifact_name: gars
-            asset_name: gars-macos
+            artifact_name: domain-checker
+            asset_name: domain-checker-macos
 
     steps:
     - uses: actions/checkout@v2
