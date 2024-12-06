@@ -1,14 +1,14 @@
 # Cargo.toml
 [package]
 name = "domain-checker"
-version = "0.3.0"
+version = "0.3.2"
 description = "Domain checker"
 authors = ["shane <shane@surly.dev>"]
 edition = "2021"
 license-file = "LICENSE"
 readme = "README.md"
 repository = "https://github.com/thesurlydev/domain-checker"
-keywords = ["cli", "domain-checker", "domans", "dns-lookup", "shell"]
+keywords = ["cli", "domain-checker", "domains", "dns-lookup", "shell"]
 categories = ["command-line-utilities", "command-line-interface"]
 
 [dependencies]
@@ -17,8 +17,5 @@ trust-dns-resolver = "0.23"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-anyhow = "1"
 futures = "0.3"
-tokio-stream = "0.1"
-async-stream = "0.3"
 chrono = "0.4"
